@@ -1,7 +1,7 @@
 import os
 import json
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Literal, Dict, List
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI(title="Microservicio IA - AAAMundial")
 
-# Configuramos Gemini (Usamos 1.5-flash por su velocidad brutal para chat)
+# Configuramos Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# 2. Bases de Datos Inmutables (Igual que en tu Typebot)
+# 2. Bases de Datos Inmutables
 CATALOGO_MODULOS = {
     "MOD_UAFE": {
         "detalle": "⚠️ *Ojo: cualquier error en el Acta o Declaración puede generar rechazo en la Supercias y multas de $5.000 a $9.200* ⚠️\nEsta herramienta le entrega el kit legal completo para evitar riesgos.\n\n✅ *Funcionalidades:*\n1) Generación automática Manual PLA/ FT\n2) Generación automática Matriz de Riesgo\n3) Plantillas debida diligencia\n4) Plantillas informes para Superintendencia de Compañías\n5) Generación de documentos para la calificación del oficial de cumplimiento\n6) Curso grabado de cómo calificarse cómo oficial de cumplimiento y obligaciones ante UAFE y Supercias",
@@ -120,7 +120,7 @@ memoria_chats: Dict[str, List[str]] = {}
 async def chat_endpoint(req: TypebotRequest):
     # 1. Recuperar o iniciar historial
     if req.phone not in memoria_chats:
-        memoria_chats[req.phone] = []
+        memoria_chats[req.phone] =[]
     
     historial = "\n".join(memoria_chats[req.phone][-10:]) # Últimos 10 mensajes
 
@@ -158,3 +158,50 @@ async def chat_endpoint(req: TypebotRequest):
         mensaje_final = datos_ia["mensaje_whatsapp"]
         id_prod = datos_ia["id_producto"]
         url_vid = None
+        v1 = v2 = v3 = v4 = None
+
+        # 4. Lógica de Inyección Backend
+        if datos_ia["accion_mostrar_detalle_individual"] and id_prod in CATALOGO_MODULOS:
+            mensaje_final += "\n\n" + CATALOGO_MODULOS[id_prod]["detalle"] + UPSELL_TEXT
+            
+        if datos_ia["accion_mostrar_video_individual"] and id_prod in CATALOGO_MODULOS:
+            mensaje_final += "\n\n🎥 *Te dejo un video rápido aquí abajo para que lo veas en acción:* 👇"
+            url_vid = CATALOGO_MODULOS[id_prod]["video"]
+
+        if datos_ia["accion_mostrar_lista_pack"]:
+            mensaje_final += "\n\n" + DETALLE_PACK
+            
+        if datos_ia["accion_mostrar_videos_pack_separados"]:
+            mensaje_final += "\n\n🎥 *Te dejo unos videos rápidos de cómo funcionan las herramientas principales:* 👇"
+            v1 = CATALOGO_MODULOS.get("MOD_SRI", {}).get("video")
+            v2 = CATALOGO_MODULOS.get("MOD_UAFE", {}).get("video")
+            v3 = CATALOGO_MODULOS.get("MOD_SOCIETARIO", {}).get("video")
+            v4 = CATALOGO_MODULOS.get("MOD_REBEFICS", {}).get("video")
+
+        if datos_ia["accion_mostrar_pagos"]:
+            link = DB_LINKS.get(id_prod, DB_LINKS["PACK_FULL"])
+            if any(palabra in req.message.lower() for palabra in ["pack", "completo", "499", "todo"]):
+                link = DB_LINKS["PACK_FULL"]
+            mensaje_final += "\n" + CUENTAS_BANCARIAS + "\n\n💳 *O SI PREFIERES TARJETA DE CRÉDITO/DÉBITO:*\n" + link
+
+        # 5. Guardar en memoria (solo el resumen)
+        resumen_mia = datos_ia["mensaje_whatsapp"]
+        if datos_ia["accion_mostrar_detalle_individual"]: resumen_mia += f" [Le envié funciones de {id_prod}]"
+        if datos_ia["accion_mostrar_pagos"]: resumen_mia += " [Le envié cuentas y link]"
+        
+        memoria_chats[req.phone].append(f"Cliente: {req.message}")
+        memoria_chats[req.phone].append(f"Henry: {resumen_mia}")
+
+        # 6. Devolver a Typebot
+        return TypebotResponse(
+            respuesta_ia=mensaje_final,
+            url_video=url_vid,
+            vid_pack_1=v1,
+            vid_pack_2=v2,
+            vid_pack_3=v3,
+            vid_pack_4=v4
+        )
+
+    except Exception as e:
+        print(f"Error IA: {e}")
+        return TypebotResponse(respuesta_ia="Uy, perdona, tuve un pequeño corte de señal. ¿Me repites lo que me decías? 😊")
