@@ -3,16 +3,16 @@ import json
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Literal, Dict, List
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 # 1. Configuración Inicial
 load_dotenv()
 app = FastAPI(title="Microservicio IA - AAAMundial")
 
-# Configuramos Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
+# Configuramos el NUEVO cliente de Gemini (Librería actualizada)
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # 2. Bases de Datos Inmutables
 CATALOGO_MODULOS = {
@@ -113,18 +113,16 @@ class EstructuraIA(BaseModel):
     accion_mostrar_videos_pack_separados: bool
     accion_mostrar_pagos: bool
 
-# Memoria Temporal (Diccionario en RAM)
+# Memoria Temporal
 memoria_chats: Dict[str, List[str]] = {}
 
 @app.post("/api/chat", response_model=TypebotResponse)
 async def chat_endpoint(req: TypebotRequest):
-    # 1. Recuperar o iniciar historial
     if req.phone not in memoria_chats:
         memoria_chats[req.phone] =[]
     
-    historial = "\n".join(memoria_chats[req.phone][-10:]) # Últimos 10 mensajes
+    historial = "\n".join(memoria_chats[req.phone][-10:])
 
-    # 2. El Prompt Maestro de Hormozi
     prompt_sistema = f"""
     SISTEMA: Eres Henry Flores, Director de AAAMundial. Eres un Vendedor Consultivo. Escribes en WhatsApp como un humano real: DIRECTO AL GRANO, mensajes EXTRA CORTOS (máximo 1 o 2 líneas), empático. NUNCA suenas como un robot ni mandas testamentos.
     
@@ -143,16 +141,17 @@ async def chat_endpoint(req: TypebotRequest):
     """
 
     try:
-        # 3. Llamamos a Gemini forzando a que devuelva nuestra estructura Pydantic
-        respuesta_cruda = model.generate_content(
-            prompt_sistema,
-            generation_config=genai.GenerationConfig(
+        # 3. Llamamos a Gemini usando tu MODELO OBLIGATORIO y la NUEVA LIBRERÍA
+        respuesta_cruda = client.models.generate_content(
+            model="gemini-3.1-flash-lite-preview",
+            contents=prompt_sistema,
+            config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=EstructuraIA
+                response_schema=EstructuraIA,
+                temperature=0.3
             )
         )
         
-        # Convertimos el JSON de Gemini a un diccionario de Python
         datos_ia = json.loads(respuesta_cruda.text)
         
         mensaje_final = datos_ia["mensaje_whatsapp"]
@@ -184,7 +183,7 @@ async def chat_endpoint(req: TypebotRequest):
                 link = DB_LINKS["PACK_FULL"]
             mensaje_final += "\n" + CUENTAS_BANCARIAS + "\n\n💳 *O SI PREFIERES TARJETA DE CRÉDITO/DÉBITO:*\n" + link
 
-        # 5. Guardar en memoria (solo el resumen)
+        # 5. Guardar en memoria
         resumen_mia = datos_ia["mensaje_whatsapp"]
         if datos_ia["accion_mostrar_detalle_individual"]: resumen_mia += f" [Le envié funciones de {id_prod}]"
         if datos_ia["accion_mostrar_pagos"]: resumen_mia += " [Le envié cuentas y link]"
